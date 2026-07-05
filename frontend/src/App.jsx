@@ -9,6 +9,9 @@ import {
   claimFaucet,
   scSymbol,
   scAddress,
+  getAccountHistory,
+  streamAccountHistory,
+  operationLabel,
 } from "./stellar";
 import { CONTRACTS, OPERATORS, STATIONS } from "./config";
 import "./App.css";
@@ -25,6 +28,7 @@ const NAV = [
   { id: "card", label: "Tap card", icon: IconCard },
   { id: "wallet", label: "Wallet", icon: IconWallet },
   { id: "activity", label: "Activity", icon: IconActivity },
+  { id: "history", label: "Chain history", icon: IconHistory },
 ];
 
 export default function App() {
@@ -51,6 +55,14 @@ export default function App() {
   const [faucetStatus, setFaucetStatus] = useState(STATUS.IDLE);
   const [faucetError, setFaucetError] = useState(null);
   const [faucetClaimed, setFaucetClaimed] = useState(false);
+
+  // Real, on-chain transaction history for the connected wallet (via
+  // Horizon), plus a live SSE subscription so new operations appear
+  // the moment they confirm - not just the ones made in this session.
+  const [chainHistory, setChainHistory] = useState([]);
+  const [historyStatus, setHistoryStatus] = useState(STATUS.IDLE);
+  const [historyError, setHistoryError] = useState(null);
+  const [historyLive, setHistoryLive] = useState(false);
 
   // isFreighterAvailable() round-trips a real message to the extension
   // (via @stellar/freighter-api) instead of just checking for an
@@ -161,6 +173,54 @@ export default function App() {
       }
     })();
   }, [publicKey, balance, faucetClaimed, faucetStatus, syncBalanceState]);
+
+  // Loads real on-chain history for the connected wallet from Horizon,
+  // then opens a live SSE stream so newly-confirmed operations (taps,
+  // faucet claims, anything) appear in real time without polling.
+  // Torn down on disconnect/unmount so we never leak an open stream.
+  useEffect(() => {
+    if (!publicKey) {
+      setChainHistory([]);
+      setHistoryStatus(STATUS.IDLE);
+      setHistoryError(null);
+      setHistoryLive(false);
+      return;
+    }
+
+    let cancelled = false;
+    let unsubscribe = null;
+
+    (async () => {
+      setHistoryStatus(STATUS.LOADING);
+      setHistoryError(null);
+      try {
+        const initial = await getAccountHistory(publicKey, 20);
+        if (cancelled) return;
+        setChainHistory(initial);
+        setHistoryStatus(STATUS.SUCCESS);
+      } catch (err) {
+        if (cancelled) return;
+        setHistoryError(err.message);
+        setHistoryStatus(STATUS.ERROR);
+      }
+
+      if (cancelled) return;
+      unsubscribe = streamAccountHistory(publicKey, {
+        onOperation: (op) => {
+          setHistoryLive(true);
+          setChainHistory((prev) =>
+            prev.some((p) => p.id === op.id) ? prev : [op, ...prev]
+          );
+        },
+        onError: () => setHistoryLive(false),
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [publicKey]);
 
   const handleTapIn = useCallback(async () => {
     if (!publicKey) return;
@@ -618,12 +678,6 @@ export default function App() {
                   <ul className="timeline">
                     {activityLog.map((entry, i) => (
                       <li key={entry.hash + i} className="timeline__item">
-                        <span
-                          className={
-                            "timeline__dot" +
-                            (entry.type === "tap_in" ? " timeline__dot--go" : " timeline__dot--stop")
-                          }
-                        />
                         <div className="timeline__body">
                           <p className="timeline__title">
                             {entry.type === "tap_in" ? "Tapped in" : "Tapped out"} at {entry.station}
@@ -644,6 +698,102 @@ export default function App() {
                   </ul>
                 )}
               </section>
+            </div>
+          )}
+
+          {activeTab === "history" && (
+            <div className="grid-2">
+              <section className="card-panel history-panel">
+                <div className="history-panel__heading">
+                  <h2 className="panel__title">On-chain history</h2>
+                  {historyLive && (
+                    <span className="live-badge">
+                      <span className="live-badge__dot" aria-hidden="true" />
+                      Live
+                    </span>
+                  )}
+                </div>
+
+                {!publicKey ? (
+                  <ConnectPrompt onGoToWallet={() => setActiveTab("wallet")} />
+                ) : (
+                  <>
+                    <p className="panel__subtitle">
+                      Every operation on this address, read directly from Horizon and
+                      updated in real time as new transactions confirm.
+                    </p>
+
+                    {historyStatus === STATUS.LOADING && (
+                      <p className="hint">Loading transaction history…</p>
+                    )}
+                    {historyStatus === STATUS.ERROR && (
+                      <p className="error" role="alert">{historyError}</p>
+                    )}
+                    {historyStatus === STATUS.SUCCESS && chainHistory.length === 0 && (
+                      <p className="panel__note">No on-chain activity yet for this address.</p>
+                    )}
+
+                    {chainHistory.length > 0 && (
+                      <ul className="timeline">
+                        {chainHistory.map((op) => (
+                          <li key={op.id} className="timeline__item">
+                            <div className="timeline__body">
+                              <p className="timeline__title">
+                                {operationLabel(op.type)}
+                                {!op.successful && (
+                                  <span className="op-pill op-pill--failed">failed</span>
+                                )}
+                              </p>
+                              <p className="timeline__meta">
+                                {new Date(op.createdAt).toLocaleString()} ·{" "}
+                                <a
+                                  href={"https://stellar.expert/explorer/testnet/tx/" + op.txHash}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {shorten(op.txHash)}
+                                </a>
+                              </p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </section>
+
+              <aside className="stat-column">
+                <div className="stat-card">
+                  <span className="stat-card__label">Source</span>
+                  <span className="stat-card__value" style={{ fontSize: "1rem" }}>
+                    Horizon
+                  </span>
+                  <span className="stat-card__unit">testnet operations feed</span>
+                </div>
+
+                <div className="stat-card">
+                  <span className="stat-card__label">Stream status</span>
+                  <span
+                    className={
+                      "status-pill" + (historyLive ? " status-pill--ready" : " status-pill--open")
+                    }
+                  >
+                    {historyLive ? "Connected" : "Not streaming"}
+                  </span>
+                  <span className="stat-card__hint">
+                    {publicKey ? "New taps appear here automatically" : "Connect a wallet to start"}
+                  </span>
+                </div>
+
+                <div className="stat-card">
+                  <span className="stat-card__label">Operations loaded</span>
+                  <span className="stat-card__value stat-card__value--go">
+                    {chainHistory.length}
+                  </span>
+                  <span className="stat-card__unit">most recent shown first</span>
+                </div>
+              </aside>
             </div>
           )}
         </main>
@@ -722,6 +872,22 @@ function IconActivity() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function IconHistory() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <circle cx="9" cy="9.5" r="6.5" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M9 6v3.5l2.5 1.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M4.5 4.5 3 3M13.5 4.5 15 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   );
 }

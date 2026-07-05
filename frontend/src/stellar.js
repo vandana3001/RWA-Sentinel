@@ -242,6 +242,103 @@ export async function claimFaucet(sourcePublicKey) {
   });
 }
 
+/**
+ * Fetches the most recent operations for an account directly from
+ * Horizon (not Soroban RPC) - this gives real on-chain history
+ * including contract invocations, payments, account creation, etc.
+ * Returns [] for a brand-new/unfunded account (404) instead of
+ * throwing, since that's an expected state, not an error.
+ */
+export async function getAccountHistory(sourcePublicKey, limit = 20) {
+  const url =
+    `${NETWORK.horizonUrl}/accounts/${sourcePublicKey}/operations` +
+    `?order=desc&limit=${limit}&include_failed=true`;
+
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new Error(`Could not reach Horizon: ${err.message || err}`);
+  }
+
+  if (res.status === 404) return [];
+  if (!res.ok) {
+    throw new Error(`Horizon returned ${res.status} while loading history`);
+  }
+
+  const data = await res.json();
+  const records = data._embedded?.records || [];
+  return records.map(mapOperationRecord);
+}
+
+/**
+ * Opens a live Horizon SSE stream for new operations on this account,
+ * starting from "now". EventSource automatically sends
+ * `Accept: text/event-stream`, which is what makes Horizon serve a
+ * stream instead of a single JSON page - no extra config needed.
+ *
+ * Call the returned function to unsubscribe (e.g. on wallet disconnect
+ * or component unmount) - always clean this up or the browser will
+ * keep the connection open indefinitely.
+ */
+export function streamAccountHistory(sourcePublicKey, { onOperation, onError } = {}) {
+  const url =
+    `${NETWORK.horizonUrl}/accounts/${sourcePublicKey}/operations` +
+    `?cursor=now&order=asc`;
+
+  const es = new EventSource(url);
+
+  es.onmessage = (evt) => {
+    try {
+      const record = JSON.parse(evt.data);
+      if (!record?.id) return; // Horizon's initial keepalive frame has no real record
+      onOperation?.(mapOperationRecord(record));
+    } catch {
+      // ignore malformed/keepalive frames
+    }
+  };
+
+  es.onerror = (err) => {
+    onError?.(err);
+  };
+
+  return () => es.close();
+}
+
+/**
+ * Normalizes a raw Horizon operation record into the small shape the
+ * UI actually needs, so components never touch Horizon's raw fields.
+ */
+function mapOperationRecord(record) {
+  return {
+    id: record.id,
+    type: record.type, // e.g. "invoke_host_function", "payment", "create_account"
+    txHash: record.transaction_hash,
+    createdAt: record.created_at,
+    successful: record.transaction_successful !== false,
+  };
+}
+
+/**
+ * Human-friendly label for a Horizon operation type.
+ */
+export function operationLabel(type) {
+  switch (type) {
+    case "invoke_host_function":
+      return "Contract call";
+    case "payment":
+      return "Payment";
+    case "create_account":
+      return "Account created";
+    case "change_trust":
+      return "Trustline change";
+    default:
+      return String(type || "Operation")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+}
+
 export function scSymbol(value) {
   return nativeToScVal(value, { type: "symbol" });
 }

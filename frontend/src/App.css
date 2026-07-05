@@ -160,6 +160,12 @@ body {
   border-left-color: var(--warn);
 }
 
+.nav-item[data-tab="history"].nav-item--active {
+  background: var(--line-soft);
+  color: var(--line);
+  border-left-color: var(--line);
+}
+
 .sidebar__footer {
   margin-top: auto;
 }
@@ -229,6 +235,7 @@ body {
 .section-accent[data-tab="card"] { background: var(--go); }
 .section-accent[data-tab="wallet"] { background: var(--violet); }
 .section-accent[data-tab="activity"] { background: var(--warn); }
+.section-accent[data-tab="history"] { background: var(--line); }
 
 .wallet-chip {
   display: inline-flex;
@@ -350,7 +357,7 @@ body {
 }
 
 /* ============================================================
-   Stat column (Tap card page, right rail)
+   Stat column (Tap card / Chain history pages, right rail)
    ============================================================ */
 .stat-column {
   display: flex;
@@ -761,7 +768,7 @@ select {
 }
 
 /* ============================================================
-   Timeline (Activity page)
+   Timeline (Activity + Chain history pages)
    ============================================================ */
 .timeline {
   list-style: none;
@@ -770,12 +777,13 @@ select {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: 560px;
+  overflow-y: auto;
 }
 
 .timeline__item {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -784,26 +792,12 @@ select {
   border-bottom: none;
 }
 
-.timeline__dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  margin-top: 5px;
-  flex-shrink: 0;
-}
-
-.timeline__dot--go {
-  background: var(--go);
-}
-
-.timeline__dot--stop {
-  background: var(--stop);
-}
-
 .timeline__title {
   margin: 0;
   font-size: 0.88rem;
   color: var(--ink);
+  display: flex;
+  align-items: center;
 }
 
 .timeline__meta {
@@ -815,6 +809,55 @@ select {
 .timeline__meta a {
   color: var(--line);
   font-family: var(--font-mono);
+}
+
+/* ============================================================
+   Chain history page — live badge + failed-operation pill
+   ============================================================ */
+.history-panel__heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--go);
+  background: var(--go-soft);
+  border: 1px solid var(--go-border);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.live-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--go);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.op-pill {
+  margin-left: 8px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+.op-pill--failed {
+  background: var(--stop-soft);
+  color: var(--stop);
 }
 
 /* ============================================================
@@ -904,6 +947,11 @@ select:focus-visible {
   .mobile-nav__item[data-tab="activity"].mobile-nav__item--active {
     background: var(--warn-soft);
     color: var(--warn);
+  }
+
+  .mobile-nav__item[data-tab="history"].mobile-nav__item--active {
+    background: var(--line-soft);
+    color: var(--line);
   }
 
   .topbar {
